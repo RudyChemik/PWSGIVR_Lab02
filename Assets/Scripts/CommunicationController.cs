@@ -156,6 +156,7 @@ public class CommunicationController : MonoBehaviour
                 else
                 {
                     _gameMenager.playersData.Add(pd);
+                    _gameMenager.SpawnPlayer(pd);
                 }
 
             }
