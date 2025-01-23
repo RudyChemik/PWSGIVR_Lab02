@@ -6,6 +6,9 @@ public class MovementController : MonoBehaviour
     private GameObject player;
     private int id;
 
+    private float lastSendTime = 0f;
+    private float sendInterval = 2f;
+
     public CommunicationController _communicationController;
 
     void Start()
@@ -14,7 +17,8 @@ public class MovementController : MonoBehaviour
         id = 1;
     }
 
-    void Update()
+
+    async void Update()
     {
         Vector3 movement = new Vector3(
             Input.GetAxis("Horizontal"),
@@ -23,10 +27,16 @@ public class MovementController : MonoBehaviour
         );
 
         player.transform.Translate(movement * 5f * Time.deltaTime);
-        _communicationController.SendPlayerData(9191, GetPlayerData());
+
+        if (Time.time - lastSendTime >= sendInterval)
+        {
+            lastSendTime = Time.time;
+            _ = _communicationController.SendPlayerData(GetPlayerData());
+        }
     }
 
-    private PlayerData GetPlayerData()
+
+    public PlayerData GetPlayerData()
     {
         PlayerData playerData = new PlayerData()
         {

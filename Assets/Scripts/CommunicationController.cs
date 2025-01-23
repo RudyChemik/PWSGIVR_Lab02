@@ -4,10 +4,11 @@ using System.Net.Sockets;
 using System.Net;
 using UnityEngine.UI;
 using TMPro;
-using System.ComponentModel;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using System.IO;
-using UnityEditor.PackageManager;
 using System.Linq;
+using System;
 
 public class CommunicationController : MonoBehaviour
 {
@@ -15,28 +16,18 @@ public class CommunicationController : MonoBehaviour
     public TMP_InputField msgSender;
     public GameMenager _gameMenager;
 
-    private BackgroundWorker udpBw;
-    private BackgroundWorker tcpBw;
-    private BackgroundWorker playersBw;
+    private bool isRunning = true;
+    private string recivedText = "";
 
-    private TcpClient client;
-    private NetworkStream stream;
-
-    private string recivedText;
+    private const string IP_O = "192.168.0.192";
+    private const int PLAYER_DATA_PORT = 9002;
+    private const int GENERAL_PORT = 9898;
 
     void Start()
     {
-        udpBw = new BackgroundWorker();
-        tcpBw = new BackgroundWorker();
-        playersBw = new BackgroundWorker();
-
-        udpBw.DoWork += new DoWorkEventHandler(bw_DoWork_udp);
-        tcpBw.DoWork += new DoWorkEventHandler(bw_DoWork_tcp);
-        playersBw.DoWork += new DoWorkEventHandler(bw_DoWork_Get_Players_Data);
-
-        udpBw.RunWorkerAsync();
-        tcpBw.RunWorkerAsync();
-        playersBw.RunWorkerAsync();
+        StartUdpListener(4001);
+        StartTcpListener(GENERAL_PORT);
+        StartPlayerDataListener(PLAYER_DATA_PORT);
     }
 
     void Update()
@@ -46,123 +37,140 @@ public class CommunicationController : MonoBehaviour
 
     public void SendClicked()
     {
-        //udpSender();
         tcpSender();
     }
 
-    private void udpSender()
+    private async void tcpSender()
     {
-        byte[] buffer = Encoding.ASCII.GetBytes($"{msgSender.text} \r\n");
-        UdpClient udpClient = new UdpClient();
-
-        udpClient.Send(buffer, buffer.Length, new IPEndPoint(IPAddress.Broadcast, 4001));
-        udpClient.Close();
-    }
-
-    private void tcpSender()
-    {
-        TcpClient tcpClient = new TcpClient("127.0.0.1", 9898);
-        NetworkStream stream = tcpClient.GetStream();
-        byte[] buffer = Encoding.ASCII.GetBytes(msgSender.text + "\r\n");
-        stream.Write(buffer, 0, buffer.Length);
-        stream.Close();
-        tcpClient.Close();
-    }
-
-    public void SendPlayerData(int port, PlayerData data)
-    {
-        TcpClient tcpClient = new TcpClient("127.0.0.1", port);
-        NetworkStream stream = tcpClient.GetStream();
-
-        //string msg = $"{data.Id}|{data.X},{data.Y},{data.Z}";
-
-        //byte[] buffer = Encoding.ASCII.GetBytes(msg);
-        //stream.Write(buffer, 0, buffer.Length);
-
-        string json = JsonUtility.ToJson(data);
-        byte[] buffer = Encoding.UTF8.GetBytes(json);
-
-        stream.Write(buffer, 0, buffer.Length);
-
-        stream.Close();
-        tcpClient.Close();
-    }
-    private void bw_DoWork_udp(object sender, DoWorkEventArgs ea)
-    {
-        UdpClient upd = new UdpClient(4001);
-        while (true)
+        try
         {
-            IPEndPoint RemoteIpEndPoint = new IPEndPoint(IPAddress.Any, 0);
-            byte[] buffer = upd.Receive(ref RemoteIpEndPoint);
-
-            Debug.Log(string.Format("{0}", Encoding.ASCII.GetString(buffer)));
-
-            if (buffer != null)
+            using (TcpClient tcpClient = new TcpClient(IP_O, GENERAL_PORT))
+            using (NetworkStream stream = tcpClient.GetStream())
             {
-                recivedText = string.Format("{0}", Encoding.ASCII.GetString(buffer));
-                Debug.Log("Recived");
+                byte[] buffer = Encoding.ASCII.GetBytes(msgSender.text + "\r\n");
+                await stream.WriteAsync(buffer, 0, buffer.Length);
             }
+        }
+        catch (SocketException ex)
+        {
+            Debug.LogError($"{ex.Message}");
         }
     }
 
-    private void bw_DoWork_tcp(object sender, DoWorkEventArgs ea)
+    public async Task SendPlayerData(PlayerData data)
     {
-        TcpListener tcpListener = new TcpListener(IPAddress.Any, 9898);
+        try
+        {
+            using (TcpClient playerSender = new TcpClient(IP_O, PLAYER_DATA_PORT))
+            using (NetworkStream stream = playerSender.GetStream())
+            {
+                string json = JsonUtility.ToJson(data);
+                byte[] buffer = Encoding.UTF8.GetBytes(json);
+                await stream.WriteAsync(buffer, 0, buffer.Length);
+            }
+        }
+        catch (SocketException ex)
+        {
+            Debug.LogError($"{ex.Message}");
+        }
+    }
+
+    private async Task StartUdpListener(int port)
+    {
+        UdpClient udp = new UdpClient(port);
+
+        while (isRunning)
+        {
+            try
+            {
+                UdpReceiveResult res = await udp.ReceiveAsync();
+                recivedText = Encoding.ASCII.GetString(res.Buffer);
+            }
+            catch (SocketException ex)
+            {
+                Debug.LogError($"{ex.Message}");
+            }
+        }
+
+        udp.Close();
+    }
+
+    private async Task StartTcpListener(int port)
+    {
+        TcpListener tcpListener = new TcpListener(IPAddress.Any, port);
         tcpListener.Start();
 
-        while (true)
+        while (isRunning)
         {
-            client = tcpListener.AcceptTcpClient();
-            stream = client.GetStream();
-
-            byte[] buffer = new byte[1024];
-            int bytesRead = stream.Read(buffer, 0, buffer.Length);
-
-            if (bytesRead > 0)
+            try
             {
-                recivedText = string.Format("{0}", Encoding.ASCII.GetString(buffer));
-                Debug.Log("Recived");
-            }
+                TcpClient client = await tcpListener.AcceptTcpClientAsync();
+                using (NetworkStream stream = client.GetStream())
+                {
+                    byte[] buffer = new byte[1024];
+                    int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
 
-            client.Close();
+                    if (bytesRead > 0)
+                    {
+                        recivedText = Encoding.ASCII.GetString(buffer, 0, bytesRead);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"{ex.Message}");
+            }
         }
+
+        tcpListener.Stop();
     }
 
-    private void bw_DoWork_Get_Players_Data(object sender, DoWorkEventArgs ea)
+    private async Task StartPlayerDataListener(int port)
     {
-        TcpListener tcpListener = new TcpListener(IPAddress.Any, 9292);
+        TcpListener tcpListener = new TcpListener(IPAddress.Any, port);
         tcpListener.Start();
 
-        while (true)
+        while (isRunning)
         {
-            client = tcpListener.AcceptTcpClient();
-            stream = client.GetStream();
-
-            byte[] buffer = new byte[1024];
-            int bytesRead = stream.Read(buffer, 0, buffer.Length);
-
-            if (bytesRead > 0)
+            try
             {
-                string json = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                PlayerData pd = JsonUtility.FromJson<PlayerData>(json);
-
-                var exisiting = _gameMenager.playersData.FirstOrDefault(a=>a.Id == pd.Id);
-                if(exisiting != null)
+                TcpClient client = await tcpListener.AcceptTcpClientAsync();
+                using (NetworkStream stream = client.GetStream())
                 {
-                    exisiting.X = pd.X;
-                    exisiting.Y = pd.Y;
-                    exisiting.Z = pd.Z;
-                }
-                else
-                {
-                    _gameMenager.playersData.Add(pd);
-                    _gameMenager.SpawnPlayer(pd);
-                }
+                    byte[] buffer = new byte[1024];
+                    int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
 
+                    if (bytesRead > 0)
+                    {
+                        string json = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                        PlayerData pd = JsonUtility.FromJson<PlayerData>(json);
+
+                        var exisiting = _gameMenager.playersData.FirstOrDefault(a => a.Id == pd.Id);
+                        if (exisiting != null)
+                        {
+                            exisiting.X = pd.X;
+                            exisiting.Y = pd.Y;
+                            exisiting.Z = pd.Z;
+                        }
+                        else
+                        {
+                            _gameMenager.playersData.Add(pd);
+                            _gameMenager.SpawnPlayer(pd);
+                        }
+                    }
+                }
             }
-
-            client.Close();
+            catch (Exception ex)
+            {
+                Debug.LogError($"{ex.Message}"); 
+            }
         }
+
+        tcpListener.Stop();
     }
 
+    void OnApplicationQuit()
+    {
+        isRunning = false;
+    }
 }

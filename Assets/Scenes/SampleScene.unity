@@ -841,7 +841,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   msgReciver: {fileID: 1601821338}
   msgSender: {fileID: 2142857009}
-  _gameMenager: {fileID: 0}
+  _gameMenager: {fileID: 459712253}
 --- !u!1 &963516150
 GameObject:
   m_ObjectHideFlags: 0
