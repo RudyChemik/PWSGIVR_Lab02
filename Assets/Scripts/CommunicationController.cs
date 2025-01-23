@@ -7,14 +7,18 @@ using TMPro;
 using System.ComponentModel;
 using System.IO;
 using UnityEditor.PackageManager;
+using System.Linq;
 
 public class CommunicationController : MonoBehaviour
 {
     public Text msgReciver;
     public TMP_InputField msgSender;
+    public GameMenager _gameMenager;
 
     private BackgroundWorker udpBw;
     private BackgroundWorker tcpBw;
+    private BackgroundWorker playersBw;
+
     private TcpClient client;
     private NetworkStream stream;
 
@@ -24,12 +28,15 @@ public class CommunicationController : MonoBehaviour
     {
         udpBw = new BackgroundWorker();
         tcpBw = new BackgroundWorker();
+        playersBw = new BackgroundWorker();
 
         udpBw.DoWork += new DoWorkEventHandler(bw_DoWork_udp);
         tcpBw.DoWork += new DoWorkEventHandler(bw_DoWork_tcp);
+        playersBw.DoWork += new DoWorkEventHandler(bw_DoWork_Get_Players_Data);
 
         udpBw.RunWorkerAsync();
         tcpBw.RunWorkerAsync();
+        playersBw.RunWorkerAsync();
     }
 
     void Update()
@@ -62,6 +69,24 @@ public class CommunicationController : MonoBehaviour
         tcpClient.Close();
     }
 
+    public void SendPlayerData(int port, PlayerData data)
+    {
+        TcpClient tcpClient = new TcpClient("127.0.0.1", port);
+        NetworkStream stream = tcpClient.GetStream();
+
+        //string msg = $"{data.Id}|{data.X},{data.Y},{data.Z}";
+
+        //byte[] buffer = Encoding.ASCII.GetBytes(msg);
+        //stream.Write(buffer, 0, buffer.Length);
+
+        string json = JsonUtility.ToJson(data);
+        byte[] buffer = Encoding.UTF8.GetBytes(json);
+
+        stream.Write(buffer, 0, buffer.Length);
+
+        stream.Close();
+        tcpClient.Close();
+    }
     private void bw_DoWork_udp(object sender, DoWorkEventArgs ea)
     {
         UdpClient upd = new UdpClient(4001);
@@ -102,4 +127,41 @@ public class CommunicationController : MonoBehaviour
             client.Close();
         }
     }
+
+    private void bw_DoWork_Get_Players_Data(object sender, DoWorkEventArgs ea)
+    {
+        TcpListener tcpListener = new TcpListener(IPAddress.Any, 9292);
+        tcpListener.Start();
+
+        while (true)
+        {
+            client = tcpListener.AcceptTcpClient();
+            stream = client.GetStream();
+
+            byte[] buffer = new byte[1024];
+            int bytesRead = stream.Read(buffer, 0, buffer.Length);
+
+            if (bytesRead > 0)
+            {
+                string json = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                PlayerData pd = JsonUtility.FromJson<PlayerData>(json);
+
+                var exisiting = _gameMenager.playersData.FirstOrDefault(a=>a.Id == pd.Id);
+                if(exisiting != null)
+                {
+                    exisiting.X = pd.X;
+                    exisiting.Y = pd.Y;
+                    exisiting.Z = pd.Z;
+                }
+                else
+                {
+                    _gameMenager.playersData.Add(pd);
+                }
+
+            }
+
+            client.Close();
+        }
+    }
+
 }
